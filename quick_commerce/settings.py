@@ -136,17 +136,17 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',  
 ]
-CSRF_TRUSTED_ORIGINS = ['http://localhost:3000']
-SESSION_ENGINE = "django.contrib.sessions.backends.db"
-SESSION_COOKIE_AGE = 86400 
-SESSION_SAVE_EVERY_REQUEST = True
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'  # Change this based on your email provider
-EMAIL_PORT = 587  # Use 465 if using SSL
-EMAIL_USE_TLS = True  # Change to False if using SSL and set EMAIL_USE_SSL = True
-EMAIL_USE_SSL = False
-EMAIL_HOST_USER = 'ss.studysync@gmail.com'  # Your email
-EMAIL_HOST_PASSWORD = 'sixanxjtbyibxrvd'  # Use App Password, NOT your normal email password
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS')
+SESSION_ENGINE = config('SESSION_ENGINE')
+SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE')
+SESSION_SAVE_EVERY_REQUEST = config('SESSION_SAVE_EVERY_REQUEST')
+EMAIL_BACKEND = config('EMAIL_BACKEND')
+EMAIL_HOST = config('EMAIL_HOST')  # Change this based on your email provider
+EMAIL_PORT = config('EMAIL_PORT')  # Use 465 if using SSL
+EMAIL_USE_TLS = config('EMAIL_USE_TLS')  # Change to False if using SSL and set EMAIL_USE_SSL = True
+EMAIL_USE_SSL = config('EMAIL_USE_SSL')
+EMAIL_HOST_USER = config('EMAIL_HOST_USER')  # Your email
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # Use App Password, NOT your normal email password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # AWS S3 Configuration
