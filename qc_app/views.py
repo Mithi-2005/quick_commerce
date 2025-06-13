@@ -20,25 +20,30 @@ def login_api(request):
 
     try:
         data = json.loads(request.body.decode('utf-8'))
-        username = data.get('username')
+        email = data.get('email')
         password = data.get('password')
 
-        if not username or not password:
-            return JsonResponse({'error': 'Missing username or password'}, status=400)
+        if not email or not password:
+            return JsonResponse({'error': 'Missing email or password'}, status=400)
 
         with connection.cursor() as cursor:
-            cursor.execute("SELECT password FROM users WHERE username = %s", [username])
+            cursor.execute("SELECT id, password FROM users WHERE email = %s", [email])
             row = cursor.fetchone()
             if row is None:
-                return JsonResponse({'error': 'Invalid username or password'}, status=401)
+                return JsonResponse({'error': 'Invalid email or password'}, status=401)
 
-            hashed_password = row[0]
+            user_id, hashed_password = row
 
             if check_password(password, hashed_password):
+                # Store user_id in session
+                request.session['user_id'] = user_id
                 # Successful login
-                return JsonResponse({'message': f'Logged in as {username}'}, status=200)
+                return JsonResponse({
+                    'message': f'Logged in as {email}',
+                    'user_id': user_id
+                }, status=200)
             else:
-                return JsonResponse({'error': 'Invalid username or password'}, status=401)
+                return JsonResponse({'error': 'Invalid email or password'}, status=401)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=400)
@@ -57,7 +62,7 @@ def signup_api(request):
         if not username or not email or not password or not mobile_no:
             return JsonResponse({'error': 'Missing required fields'}, status=400)
             
-        # Check if verified user already exists
+        
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT id FROM users WHERE (username = %s OR email = %s) AND is_verified = %s",
@@ -508,3 +513,486 @@ def search_products(request):
             return JsonResponse({'error': str(e)}, status=500)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+@csrf_exempt
+def add_address(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        # Check if user is logged in via session
+        if 'user_id' not in request.session:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        user_id = request.session['user_id']
+        data = json.loads(request.body.decode('utf-8'))
+        
+        full_name = data.get('full_name')
+        phone_number = data.get('phone_number')
+        address_line1 = data.get('address_line1')
+        address_line2 = data.get('address_line2')
+        city = data.get('city')
+        state = data.get('state')
+        postal_code = data.get('postal_code')
+        country = data.get('country')
+        is_default = data.get('is_default', False)
+
+        # Validate required fields
+        required_fields = ['full_name', 'phone_number', 'address_line1', 'city', 'state', 'postal_code', 'country']
+        for field in required_fields:
+            if not data.get(field):
+                return JsonResponse({'error': f'{field} is required'}, status=400)
+
+        with connection.cursor() as cursor:
+            # Verify user exists
+            cursor.execute("SELECT id FROM users WHERE id = %s", [user_id])
+            if not cursor.fetchone():
+                return JsonResponse({'error': 'User not found'}, status=404)
+
+            # If this is set as default, unset any existing default address
+            if is_default:
+                cursor.execute(
+                    "UPDATE user_addresses SET is_default = FALSE WHERE user_id = %s",
+                    [user_id]
+                )
+
+            # Insert new address
+            cursor.execute("""
+                INSERT INTO user_addresses 
+                (user_id, full_name, phone_number, address_line1, address_line2, 
+                city, state, postal_code, country, is_default)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, [user_id, full_name, phone_number, address_line1, address_line2, 
+                 city, state, postal_code, country, is_default])
+
+        return JsonResponse({'message': 'Address added successfully'}, status=201)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def edit_address(request, address_id):
+    if request.method != 'PUT':
+        return JsonResponse({'error': 'Only PUT method allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        full_name = data.get('full_name')
+        phone_number = data.get('phone_number')
+        address_line1 = data.get('address_line1')
+        address_line2 = data.get('address_line2')
+        city = data.get('city')
+        state = data.get('state')
+        postal_code = data.get('postal_code')
+        country = data.get('country')
+        is_default = data.get('is_default')
+
+        # Validate required fields
+        required_fields = ['full_name', 'phone_number', 'address_line1', 'city', 'state', 'postal_code', 'country']
+        for field in required_fields:
+            if not data.get(field):
+                return JsonResponse({'error': f'{field} is required'}, status=400)
+
+        with connection.cursor() as cursor:
+            # Get user_id for this address
+            cursor.execute("SELECT user_id FROM user_addresses WHERE id = %s", [address_id])
+            result = cursor.fetchone()
+            if not result:
+                return JsonResponse({'error': 'Address not found'}, status=404)
+            
+            user_id = result[0]
+
+            # If this is set as default, unset any existing default address
+            if not is_default:
+                is_default = False
+
+            # Update address
+            cursor.execute("""
+                UPDATE user_addresses 
+                SET full_name = %s, phone_number = %s, address_line1 = %s, 
+                    address_line2 = %s, city = %s, state = %s, 
+                    postal_code = %s, country = %s, is_default = %s
+                WHERE id = %s
+            """, [full_name, phone_number, address_line1, address_line2, 
+                 city, state, postal_code, country, is_default, address_id])
+
+        return JsonResponse({'message': 'Address updated successfully'})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def delete_address(request, address_id):
+    if request.method != 'DELETE':
+        return JsonResponse({'error': 'Only DELETE method allowed'}, status=405)
+    
+    try:
+        with connection.cursor() as cursor:
+            # Check if address exists
+            cursor.execute("SELECT id FROM user_addresses WHERE id = %s", [address_id])
+            if not cursor.fetchone():
+                return JsonResponse({'error': 'Address not found'}, status=404)
+
+            # Delete address
+            cursor.execute("DELETE FROM user_addresses WHERE id = %s", [address_id])
+
+        return JsonResponse({'message': 'Address deleted successfully'})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def get_user_addresses(request, user_id):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, full_name, phone_number, address_line1, address_line2,
+                       city, state, postal_code, country, is_default
+                FROM user_addresses
+                WHERE user_id = %s
+                ORDER BY is_default DESC, id DESC
+            """, [user_id])
+            
+            columns = [col[0] for col in cursor.description]
+            addresses = []
+            for row in cursor.fetchall():
+                address = dict(zip(columns, row))
+                addresses.append(address)
+
+        return JsonResponse({'addresses': addresses})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def get_address_by_id(request, address_id):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, user_id, full_name, phone_number, address_line1, address_line2,
+                       city, state, postal_code, country, is_default
+                FROM user_addresses
+                WHERE id = %s
+            """, [address_id])
+            
+            row = cursor.fetchone()
+            if not row:
+                return JsonResponse({'error': 'Address not found'}, status=404)
+            
+            columns = [col[0] for col in cursor.description]
+            address = dict(zip(columns, row))
+
+        return JsonResponse({'address': address})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def add_to_cart(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        user_id = request.session.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        product_id = data.get('product_id')
+        quantity = data.get('quantity', 1)
+
+        if not product_id:
+            return JsonResponse({'error': 'Product ID is required'}, status=400)
+
+        with connection.cursor() as cursor:
+            # Get or create cart
+            cursor.execute("SELECT cart_id FROM cart WHERE user_id = %s", [user_id])
+            cart = cursor.fetchone()
+            
+            if not cart:
+                cursor.execute("INSERT INTO cart (user_id) VALUES (%s)", [user_id])
+                cart_id = cursor.lastrowid
+            else:
+                cart_id = cart[0]
+
+            # Check if product already in cart
+            cursor.execute("""
+                SELECT id, quantity FROM cart_items 
+                WHERE cart_id = %s AND product_id = %s
+            """, [cart_id, product_id])
+            
+            existing_item = cursor.fetchone()
+            
+            if existing_item:
+                # Update quantity
+                new_quantity = existing_item[1] + quantity
+                cursor.execute("""
+                    UPDATE cart_items 
+                    SET quantity = %s 
+                    WHERE id = %s
+                """, [new_quantity, existing_item[0]])
+            else:
+                # Add new item
+                cursor.execute("""
+                    INSERT INTO cart_items (cart_id, product_id, quantity)
+                    VALUES (%s, %s, %s)
+                """, [cart_id, product_id, quantity])
+
+        return JsonResponse({'message': 'Item added to cart successfully'}, status=201)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def get_cart(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        user_id = request.session.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Get cart items with product details
+            cursor.execute("""
+                SELECT ci.id, ci.product_id, ci.quantity, ci.added_at,
+                       p.product_name, p.original_price, p.final_price, p.images,
+                       m.merchant_name as merchant_name
+                FROM cart c
+                JOIN cart_items ci ON c.cart_id = ci.cart_id
+                JOIN products p ON ci.product_id = p.product_id
+                JOIN merchants m ON p.merchant_id = m.id
+                WHERE c.user_id = %s
+            """, [user_id])
+            
+            columns = [col[0] for col in cursor.description]
+            items = []
+            total_amount = 0
+            
+            for row in cursor.fetchall():
+                item = dict(zip(columns, row))
+                item['final_price'] = item['final_price']
+                item['subtotal'] = item['final_price'] * item['quantity']
+                total_amount += item['subtotal']
+                items.append(item)
+
+        return JsonResponse({
+            'items': items,
+            'total_amount': total_amount
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def update_cart_item(request, item_id):
+    if request.method != 'PUT':
+        return JsonResponse({'error': 'Only PUT method allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        quantity = data.get('quantity')
+        
+        if not quantity or quantity < 1:
+            return JsonResponse({'error': 'Valid quantity is required'}, status=400)
+
+        user_id = request.session.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Verify cart item belongs to user
+            cursor.execute("""
+                SELECT ci.id FROM cart_items ci
+                JOIN cart c ON ci.cart_id = c.cart_id
+                WHERE ci.id = %s AND c.user_id = %s
+            """, [item_id, user_id])
+            
+            if not cursor.fetchone():
+                return JsonResponse({'error': 'Cart item not found'}, status=404)
+
+            # Update quantity
+            cursor.execute("""
+                UPDATE cart_items 
+                SET quantity = %s 
+                WHERE id = %s
+            """, [quantity, item_id])
+
+        return JsonResponse({'message': 'Cart item updated successfully'})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def remove_from_cart(request, item_id):
+    if request.method != 'DELETE':
+        return JsonResponse({'error': 'Only DELETE method allowed'}, status=405)
+    
+    try:
+        user_id = request.session.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Verify cart item belongs to user
+            cursor.execute("""
+                SELECT ci.id FROM cart_items ci
+                JOIN cart c ON ci.cart_id = c.cart_id
+                WHERE ci.id = %s AND c.user_id = %s
+            """, [item_id, user_id])
+            
+            if not cursor.fetchone():
+                return JsonResponse({'error': 'Cart item not found'}, status=404)
+
+            # Delete item
+            cursor.execute("DELETE FROM cart_items WHERE id = %s", [item_id])
+
+        return JsonResponse({'message': 'Item removed from cart successfully'})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def place_order(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        user_id = request.session.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        address_id = data.get('address_id')
+        if not address_id:
+            return JsonResponse({'error': 'Address ID is required'}, status=400)
+
+        with connection.cursor() as cursor:
+            # Start transaction
+            cursor.execute("START TRANSACTION")
+
+            try:
+                # Get cart items with product details
+                cursor.execute("""
+                    SELECT ci.product_id, ci.quantity, p.original_price, p.final_price,
+                           p.merchant_id, p.stock
+                    FROM cart c
+                    JOIN cart_items ci ON c.cart_id = ci.cart_id
+                    JOIN products p ON ci.product_id = p.product_id
+                    WHERE c.user_id = %s
+                """, [user_id])
+                
+                cart_items = cursor.fetchall()
+                if not cart_items:
+                    raise Exception('Cart is empty')
+
+                # Check stock availability and calculate total amount
+                total_amount = 0
+                for item in cart_items:
+                    product_id, quantity, price, discount_price, merchant_id, stock = item
+                    if quantity > stock:
+                        raise Exception(f'Insufficient stock for product ID {product_id}')
+                    final_price = discount_price or price
+                    total_amount += final_price * quantity
+
+                # Create order
+                cursor.execute("""
+                    INSERT INTO orders (user_id, address_id, total_amount, payment_mode, payment_status)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, [user_id, address_id, total_amount, 'COD', 'pending'])
+                
+                order_id = cursor.lastrowid
+
+                # Create order items and update stock
+                for item in cart_items:
+                    product_id, quantity, price, discount_price, merchant_id, stock = item
+                    final_price = discount_price or price
+                    
+                    # Create order item
+                    cursor.execute("""
+                        INSERT INTO order_items 
+                        (order_id, product_id, merchant_id, quantity, price, final_price, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, [order_id, product_id, merchant_id, quantity, price, final_price, 'placed'])
+
+                    # Update product stock
+                    cursor.execute("""
+                        UPDATE products 
+                        SET stock = stock - %s 
+                        WHERE product_id = %s
+                    """, [quantity, product_id])
+
+                # Clear cart
+                cursor.execute("""
+                    DELETE ci FROM cart_items ci
+                    JOIN cart c ON ci.cart_id = c.cart_id
+                    WHERE c.user_id = %s
+                """, [user_id])
+
+                cursor.execute("COMMIT")
+                return JsonResponse({
+                    'message': 'Order placed successfully',
+                    'order_id': order_id,
+                    'total_amount': total_amount
+                }, status=201)
+
+            except Exception as e:
+                cursor.execute("ROLLBACK")
+                raise e
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def get_orders(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        user_id = request.session.get('user_id')
+        if not user_id:
+            return JsonResponse({'error': 'User not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Get orders with address details
+            cursor.execute("""
+                SELECT o.order_id, o.total_amount, o.payment_mode, o.payment_status,
+                       o.created_at, a.full_name, a.phone_number, a.address_line1,
+                       a.address_line2, a.city, a.state, a.postal_code, a.country
+                FROM orders o
+                LEFT JOIN user_addresses a ON o.address_id = a.id
+                WHERE o.user_id = %s
+                ORDER BY o.created_at DESC
+            """, [user_id])
+            
+            columns = [col[0] for col in cursor.description]
+            orders = []
+            
+            for row in cursor.fetchall():
+                order = dict(zip(columns, row))
+                
+                # Get order items
+                cursor.execute("""
+                    SELECT oi.id, oi.product_id, oi.quantity, oi.price, oi.final_price,
+                           oi.status, p.product_name, p.images, m.merchant_name as merchant_name
+                    FROM order_items oi
+                    JOIN products p ON oi.product_id = p.product_id
+                    JOIN merchants m ON oi.merchant_id = m.id
+                    WHERE oi.order_id = %s
+                """, [order['order_id']])
+                
+                item_columns = [col[0] for col in cursor.description]
+                order['items'] = [dict(zip(item_columns, item)) for item in cursor.fetchall()]
+                orders.append(order)
+
+        return JsonResponse({'orders': orders})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)

@@ -1,0 +1,345 @@
+API Documentation for E-commerce Views
+Table of Contents
+Authentication APIs
+
+Login
+
+Signup
+
+Send OTP
+
+Resend OTP
+
+Verify OTP
+
+Product APIs
+
+Get Product by ID
+
+Get Products by Category
+
+Get Products by Merchant
+
+Search Products
+
+Authentication APIs
+Login API
+Endpoint: /api/login/
+Method: POST
+Description: Authenticates a user with username and password.
+
+Request Body:
+
+json
+{
+    "username": "user123",
+    "password": "password123"
+}
+Success Response:
+
+json
+{
+    "message": "Logged in as user123"
+}
+Error Responses:
+
+400: Missing username or password
+
+401: Invalid username or password
+
+405: Method not allowed
+
+Signup API
+Endpoint: /api/signup/
+Method: POST
+Description: Initiates user registration process by creating an unverified user record and sending OTP to email.
+
+Request Body:
+
+json
+{
+    "mobile_no": "9876543210",
+    "username": "newuser",
+    "email": "user@example.com",
+    "password": "securepassword"
+}
+Success Response:
+
+json
+{
+    "message": "Signup initiated. Please verify your email with OTP.",
+    "email": "user@example.com"
+}
+Error Responses:
+
+400: Missing required fields, username/email already exists
+
+405: Method not allowed
+
+Send OTP API
+Endpoint: /api/send-otp/
+Method: POST
+Description: Sends OTP to the provided email address.
+
+Request Body:
+
+json
+{
+    "email": "user@example.com"
+}
+Success Response:
+
+json
+{
+    "message": "OTP sent successfully",
+    "otp": "123456"
+}
+Error Responses:
+
+400: Email is required
+
+405: Method not allowed
+
+Resend OTP API
+Endpoint: /api/resend-otp/
+Method: POST
+Description: Resends OTP to an unverified user's email.
+
+Request Body:
+
+json
+{
+    "email": "user@example.com"
+}
+Success Response:
+
+json
+{
+    "message": "New OTP sent successfully",
+    "email": "user@example.com"
+}
+Error Responses:
+
+400: Email is required
+
+404: No pending verification found
+
+405: Method not allowed
+
+Verify OTP API
+Endpoint: /api/verify-otp/
+Method: POST
+Description: Verifies the OTP and marks user as verified if correct.
+
+Request Body:
+
+json
+{
+    "email": "user@example.com",
+    "otp": "123456"
+}
+Success Response:
+
+json
+{
+    "message": "Email verified successfully. You can now login.",
+    "email": "user@example.com"
+}
+Error Responses:
+
+400: Email and OTP required, invalid OTP, OTP expired
+
+404: No pending verification found
+
+405: Method not allowed
+
+Product APIs
+Get Product by ID
+Endpoint: /api/products/<int:product_id>/
+Method: GET
+Description: Retrieves detailed information about a specific product.
+
+URL Parameters:
+
+product_id: ID of the product to retrieve
+
+Success Response:
+
+json
+{
+    "message": "Product retrieved successfully",
+    "product": {
+        "product_id": 1,
+        "product_name": "Smartphone",
+        "description": "Latest model smartphone",
+        "original_price": 999.99,
+        "discount": 10.0,
+        "final_price": 899.99,
+        "images": ["image1.jpg", "image2.jpg"],
+        "stock": 50,
+        "category_id": 1,
+        "category_name": "Electronics",
+        "merchant_id": 1,
+        "merchant_name": "John Doe",
+        "store_name": "Tech World",
+        "created_at": "2023-01-15T10:30:00Z"
+    }
+}
+Error Responses:
+
+404: Product not found
+
+405: Method not allowed
+
+500: Server error
+
+Get Products by Category
+Endpoint: /api/categories/<int:category_id>/products/
+Method: GET
+Description: Retrieves paginated list of products in a specific category.
+
+URL Parameters:
+
+category_id: ID of the category
+
+Query Parameters:
+
+page: Page number (default: 1)
+
+per_page: Items per page (default: 10)
+
+Success Response:
+
+json
+{
+    "products": [
+        {
+            "product_id": 1,
+            "product_name": "Product 1",
+            "images": ["img1.jpg"],
+            "final_price": 99.99,
+            "category_name": "Electronics",
+            "merchant_name": "John Doe"
+        }
+    ],
+    "total": 25,
+    "page": 1,
+    "per_page": 10,
+    "total_pages": 3
+}
+Error Responses:
+
+405: Method not allowed
+
+500: Server error
+
+Get Products by Merchant
+Endpoint: /api/merchants/<int:merchant_id>/products/
+Method: GET
+Description: Retrieves paginated list of products from a specific merchant.
+
+URL Parameters:
+
+merchant_id: ID of the merchant
+
+Query Parameters:
+
+page: Page number (default: 1)
+
+per_page: Items per page (default: 10)
+
+Success Response:
+
+json
+{
+    "products": [
+        {
+            "product_id": 1,
+            "product_name": "Product 1",
+            "images": ["img1.jpg"],
+            "final_price": 99.99,
+            "category_name": "Electronics"
+        }
+    ],
+    "total": 15,
+    "page": 1,
+    "per_page": 10,
+    "total_pages": 2
+}
+Error Responses:
+
+405: Method not allowed
+
+500: Server error
+
+Search Products
+Endpoint: /api/products/search/
+Method: GET
+Description: Searches products with various filters and sorting options.
+
+Query Parameters:
+
+query: Search string (optional)
+
+category_id: Filter by category (optional)
+
+min_price: Minimum price filter (optional)
+
+max_price: Maximum price filter (optional)
+
+merchant_id: Filter by merchant (optional)
+
+sort_by: Field to sort by (created_at, price, name, discount; default: created_at)
+
+sort_order: Sort order (asc, desc; default: desc)
+
+page: Page number (default: 1)
+
+per_page: Items per page (default: 10)
+
+Success Response:
+
+json
+{
+    "message": "Products retrieved successfully",
+    "products": [
+        {
+            "product_id": 1,
+            "product_name": "Smartphone",
+            "description": "Latest model",
+            "original_price": 999.99,
+            "discount": 10.0,
+            "final_price": 899.99,
+            "images": ["phone1.jpg"],
+            "stock": 50,
+            "category_id": 1,
+            "category_name": "Electronics",
+            "merchant_id": 1,
+            "merchant_name": "Tech Seller",
+            "store_name": "Tech World",
+            "created_at": "2023-01-15T10:30:00Z"
+        }
+    ],
+    "pagination": {
+        "total": 15,
+        "page": 1,
+        "per_page": 10,
+        "total_pages": 2
+    }
+}
+Error Responses:
+
+405: Method not allowed
+
+500: Server error
+
+Notes
+All authentication APIs are CSRF exempt for API usage.
+
+Product images are stored as JSON strings in the database and are automatically converted to arrays in responses.
+
+Pagination is implemented in all product listing APIs.
+
+OTPs expire after 5 minutes.
+
+Error responses include appropriate HTTP status codes and error messages.

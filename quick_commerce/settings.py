@@ -44,6 +44,8 @@ INSTALLED_APPS = [
     "qc_app",
     "merchants",
     "storages",
+    "rest_framework",
+    "drf_yasg",
 ]
 
 MIDDLEWARE = [
@@ -136,18 +138,18 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',  
 ]
-CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS')
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000']
 SESSION_ENGINE = config('SESSION_ENGINE')
-SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE')
+SESSION_COOKIE_AGE = float(config('SESSION_COOKIE_AGE'))
 SESSION_SAVE_EVERY_REQUEST = config('SESSION_SAVE_EVERY_REQUEST')
 EMAIL_BACKEND = config('EMAIL_BACKEND')
-EMAIL_HOST = config('EMAIL_HOST')  # Change this based on your email provider
-EMAIL_PORT = config('EMAIL_PORT')  # Use 465 if using SSL
-EMAIL_USE_TLS = config('EMAIL_USE_TLS')  # Change to False if using SSL and set EMAIL_USE_SSL = True
-EMAIL_USE_SSL = config('EMAIL_USE_SSL')
-EMAIL_HOST_USER = config('EMAIL_HOST_USER')  # Your email
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # Use App Password, NOT your normal email password
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+EMAIL_HOST = config('EMAIL_HOST')  
+EMAIL_PORT = config('EMAIL_PORT')  
+EMAIL_USE_TLS = True  
+EMAIL_USE_SSL = False
+EMAIL_HOST_USER = config('EMAIL_HOST_USER')  
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD') 
+DEFAULT_FROM_EMAIL = config('EMAIL_HOST_USER')
 
 # AWS S3 Configuration
 AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='ap-south-1')
@@ -155,12 +157,18 @@ AWS_S3_FILE_OVERWRITE = False
 AWS_DEFAULT_ACL = None
 AWS_S3_VERIFY = True
 
-# Static and Media Files Configuration
-STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+# Static files (CSS, JavaScript, Images)
+STATIC_URL = '/static/'
 
-# Media files configuration
-MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
-MEDIA_ROOT = 'media/'
+if not DEBUG:
+    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+    MEDIA_ROOT = 'media/'
+else:
+    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
 
 

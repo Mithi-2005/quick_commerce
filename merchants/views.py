@@ -541,3 +541,154 @@ def delete_product(request, product_id):
             return JsonResponse({'error': str(e)}, status=500)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+@csrf_exempt
+def get_merchant_orders(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        merchant_id = request.session.get('merchant_id')
+        if not merchant_id:
+            return JsonResponse({'error': 'Merchant not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Get orders for this merchant
+            cursor.execute("""
+                SELECT DISTINCT o.order_id, o.total_amount, o.payment_mode, o.payment_status,
+                       o.created_at, a.full_name, a.phone_number, a.address_line1,
+                       a.address_line2, a.city, a.state, a.postal_code, a.country
+                FROM orders o
+                JOIN order_items oi ON o.order_id = oi.order_id
+                LEFT JOIN user_addresses a ON o.address_id = a.id
+                WHERE oi.merchant_id = %s
+                ORDER BY o.created_at DESC
+            """, [merchant_id])
+            
+            columns = [col[0] for col in cursor.description]
+            orders = []
+            
+            for row in cursor.fetchall():
+                order = dict(zip(columns, row))
+                
+                # Get order items for this merchant only
+                cursor.execute("""
+                    SELECT oi.id, oi.product_id, oi.quantity, oi.price, oi.final_price,
+                           oi.status, p.product_name, p.images
+                    FROM order_items oi
+                    JOIN products p ON oi.product_id = p.product_id
+                    WHERE oi.order_id = %s AND oi.merchant_id = %s
+                """, [order['order_id'], merchant_id])
+                
+                item_columns = [col[0] for col in cursor.description]
+                order['items'] = [dict(zip(item_columns, item)) for item in cursor.fetchall()]
+                
+                # Calculate merchant's total for this order
+                merchant_total = sum(item['final_price'] * item['quantity'] for item in order['items'])
+                order['merchant_total'] = merchant_total
+                
+                orders.append(order)
+
+        return JsonResponse({'orders': orders})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def update_order_item_status(request, item_id):
+    if request.method != 'PUT':
+        return JsonResponse({'error': 'Only PUT method allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        status = data.get('status')
+        
+        if not status:
+            return JsonResponse({'error': 'Status is required'}, status=400)
+            
+        valid_statuses = ['returned', 'placed', 'shipped', 'delivered', 'cancelled']
+        if status not in valid_statuses:
+            return JsonResponse({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}, status=400)
+
+        merchant_id = request.session.get('merchant_id')
+        if not merchant_id:
+            return JsonResponse({'error': 'Merchant not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Verify order item belongs to this merchant
+            cursor.execute("""
+                SELECT oi.id FROM order_items oi
+                WHERE oi.id = %s AND oi.merchant_id = %s
+            """, [item_id, merchant_id])
+            
+            if not cursor.fetchone():
+                return JsonResponse({'error': 'Order item not found'}, status=404)
+
+            # Update status
+            cursor.execute("""
+                UPDATE order_items 
+                SET status = %s 
+                WHERE id = %s
+            """, [status, item_id])
+
+        return JsonResponse({'message': 'Order item status updated successfully'})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+@csrf_exempt
+def get_merchant_order_stats(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        merchant_id = request.session.get('merchant_id')
+        if not merchant_id:
+            return JsonResponse({'error': 'Merchant not authenticated'}, status=401)
+
+        with connection.cursor() as cursor:
+            # Get total orders and revenue
+            cursor.execute("""
+                SELECT 
+                    COUNT(DISTINCT o.order_id) as total_orders,
+                    SUM(oi.quantity * oi.final_price) as total_revenue,
+                    COUNT(DISTINCT CASE WHEN oi.status = 'placed' THEN o.order_id END) as pending_orders,
+                    COUNT(DISTINCT CASE WHEN oi.status = 'returned' THEN o.order_id END) as retuned_orders,
+                    COUNT(DISTINCT CASE WHEN oi.status = 'shipped' THEN o.order_id END) as shipped_orders,
+                    COUNT(DISTINCT CASE WHEN oi.status = 'delivered' THEN o.order_id END) as delivered_orders,
+                    COUNT(DISTINCT CASE WHEN oi.status = 'rejected' THEN o.order_id END) as cancelled_orders
+                FROM orders o
+                JOIN order_items oi ON o.order_id = oi.order_id
+                WHERE oi.merchant_id = %s
+            """, [merchant_id])
+            
+            stats = dict(zip([col[0] for col in cursor.description], cursor.fetchone()))
+
+            # Get recent orders (last 7 days)
+            cursor.execute("""
+                SELECT 
+                    DATE(o.created_at) as date,
+                    COUNT(DISTINCT o.order_id) as order_count,
+                    SUM(oi.quantity * oi.final_price) as daily_revenue
+                FROM orders o
+                JOIN order_items oi ON o.order_id = oi.order_id
+                WHERE oi.merchant_id = %s
+                AND o.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY)
+                GROUP BY DATE(o.created_at)
+                ORDER BY date DESC
+            """, [merchant_id])
+            
+            recent_stats = []
+            for row in cursor.fetchall():
+                recent_stats.append({
+                    'date': row[0].strftime('%Y-%m-%d'),
+                    'order_count': row[1],
+                    'revenue': float(row[2]) if row[2] else 0
+                })
+
+            stats['recent_stats'] = recent_stats
+
+        return JsonResponse({'stats': stats})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
