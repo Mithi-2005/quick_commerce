@@ -13,7 +13,6 @@ inflection==0.5.1
 jmespath==1.0.1
 mysqlclient==2.2.7
 packaging==25.0
-psycopg2==2.9.10
 python-dateutil==2.9.0.post0
 python-decouple==3.8
 pytz==2025.2
