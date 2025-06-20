@@ -18,6 +18,8 @@ urlpatterns = [
     path('addresses/<int:address_id>/delete/', views.delete_address, name='delete_address'),
     path('addresses/user/<int:user_id>/', views.get_user_addresses, name='get_user_addresses'),
     path('addresses/<int:address_id>/', views.get_address_by_id, name='get_address_by_id'),
+    
+    # Cart endpoints
     path('cart/add/', views.add_to_cart, name='add_to_cart'),
     path('cart/', views.get_cart, name='get_cart'),
     path('cart/items/<int:item_id>/update/', views.update_cart_item, name='update_cart_item'),
