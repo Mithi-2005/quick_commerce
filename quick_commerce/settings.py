@@ -29,7 +29,7 @@ SECRET_KEY = config('DJANGO_SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['13.235.74.185']
+ALLOWED_HOSTS = ['13.235.74.185','localhost','127.0.0.1']
 
 
 # Application definition
@@ -85,10 +85,10 @@ WSGI_APPLICATION = "quick_commerce.wsgi.application"
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': config('DB_NAME', default='quick_commerce_db'),
-        'USER': config('DB_USER', default='root'),
+        'NAME': config('DB_DBNAME'),
+        'USER': config('DB_USERNAME'),
         'PASSWORD': config('DB_PASS'),
-        'HOST': config('DB_HOST', default='localhost'), 
+        'HOST': config('DB_HOST'), 
         'PORT': config('DB_PORT'),
     }
 }

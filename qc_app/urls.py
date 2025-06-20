@@ -1,5 +1,8 @@
 from django.urls import path
 from . import views
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.db import connection
 
 urlpatterns = [
     path('login/', views.login_api, name='login_api'),
@@ -15,8 +18,6 @@ urlpatterns = [
     path('addresses/<int:address_id>/delete/', views.delete_address, name='delete_address'),
     path('addresses/user/<int:user_id>/', views.get_user_addresses, name='get_user_addresses'),
     path('addresses/<int:address_id>/', views.get_address_by_id, name='get_address_by_id'),
-    
-    # Cart endpoints
     path('cart/add/', views.add_to_cart, name='add_to_cart'),
     path('cart/', views.get_cart, name='get_cart'),
     path('cart/items/<int:item_id>/update/', views.update_cart_item, name='update_cart_item'),
@@ -25,4 +26,10 @@ urlpatterns = [
     # Order endpoints
     path('orders/place/', views.place_order, name='place_order'),
     path('orders/', views.get_orders, name='get_orders'),
+
+    # Referral, points, and user info endpoints
+    path('referral_code/', views.get_referral_code, name='get_referral_code'),
+    path('referrals/', views.get_referrals, name='get_referrals'),
+    path('points_history/', views.get_points_history, name='get_points_history'),
+    path('details/', views.get_user_details, name='get_user_details'),
 ]

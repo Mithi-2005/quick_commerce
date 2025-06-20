@@ -11,6 +11,8 @@ from django.utils.timezone import now as django_now
 from datetime import timedelta
 from django.core.mail import send_mail
 import random
+import string
+import re
 
 
 @csrf_exempt
@@ -58,12 +60,17 @@ def signup_api(request):
         username = data.get('username')
         email = data.get('email')
         password = data.get('password')
+        referral_code_used = data.get('referral_code_used')
         
         if not username or not email or not password or not mobile_no:
             return JsonResponse({'error': 'Missing required fields'}, status=400)
-            
+        
+        otp = str(random.randint(100000, 999999))
+        now = datetime.now()
+        hashed_password = make_password(password)
         
         with connection.cursor() as cursor:
+            # Check for existing user
             cursor.execute(
                 "SELECT id FROM users WHERE (username = %s OR email = %s) AND is_verified = %s",
                 [username, email, True]
@@ -74,24 +81,35 @@ def signup_api(request):
                 "DELETE FROM users WHERE email = %s AND is_verified = %s",
                 [email, False]
             )
-        
-        # Generate OTP
-        otp = str(random.randint(100000, 999999))
-        now = datetime.now()
-        hashed_password = make_password(password)
-        
-        # Store temporary data in users table with is_verified=False
-        with connection.cursor() as cursor:
+            # Insert new user
             cursor.execute(
                 """INSERT INTO users 
-                   (username, email, password, mobile_no, otp, otp_created_at, is_verified) 
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                [username, email, hashed_password, mobile_no, otp, now, False]
+                   (username, email, password, mobile_no, otp, otp_created_at, is_verified, referral_code_used) 
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                [username, email, hashed_password, mobile_no, otp, now, False, referral_code_used]
             )
-            
-        # Send OTP via email
+            user_id = cursor.lastrowid
+
+            # Generate and insert referral code for this user
+            referral_code = get_unique_referral_code(cursor)
+            cursor.execute(
+                "INSERT INTO referrals (user_id, referral_code, referred_user_ids, successful_referrals) VALUES (%s, %s, %s, %s)",
+                [user_id, referral_code, json.dumps([]), json.dumps([])]
+            )
+
+            # If referral code was used, update referrer's referred_user_ids
+            if referral_code_used:
+                cursor.execute("SELECT user_id FROM referrals WHERE referral_code = %s", [referral_code_used])
+                referrer = cursor.fetchone()
+                if referrer:
+                    referrer_id = referrer[0]
+                    cursor.execute("SELECT referred_user_ids FROM referrals WHERE user_id = %s", [referrer_id])
+                    referred_ids = cursor.fetchone()[0]
+                    referred_list = json.loads(referred_ids) if referred_ids else []
+                    referred_list.append(user_id)
+                    cursor.execute("UPDATE referrals SET referred_user_ids = %s WHERE user_id = %s", [json.dumps(referred_list), referrer_id])
+
         send_otp_via_email(email, otp)
-        
         return JsonResponse({
             'message': 'Signup initiated. Please verify your email with OTP.',
             'email': email
@@ -378,30 +396,52 @@ def get_products_by_merchant(request, merchant_id):
 def search_products(request):
     if request.method == 'GET':
         try:
-            # Get search parameters
-            search_query = request.GET.get('query', '').strip()
-            category_id = request.GET.get('category_id')
+            # Get and clean search query
+            raw_query = request.GET.get('query', '').strip()
+            search_lower = raw_query.lower()
+
+            # Extract min and max price from query string
             min_price = request.GET.get('min_price')
             max_price = request.GET.get('max_price')
+
+            # Detect and parse price keywords in raw_query
+            match = re.search(r'between\s+(\d+)\s+and\s+(\d+)', search_lower)
+            if match:
+                min_price = min_price or match.group(1)
+                max_price = max_price or match.group(2)
+                search_lower = search_lower.replace(match.group(0), '')
+
+            match = re.search(r'(under|below|less than)\s+(\d+)', search_lower)
+            if match:
+                max_price = max_price or match.group(2)
+                search_lower = search_lower.replace(match.group(0), '')
+
+            match = re.search(r'(above|over|greater than)\s+(\d+)', search_lower)
+            if match:
+                min_price = min_price or match.group(2)
+                search_lower = search_lower.replace(match.group(0), '')
+
+            # Clean remaining search query
+            search_query = re.sub(r'\s+', ' ', search_lower).strip()
+
+            # Additional filters
+            category_id = request.GET.get('category_id')
             merchant_id = request.GET.get('merchant_id')
-            sort_by = request.GET.get('sort_by', 'created_at')  # Default sort by creation date
-            sort_order = request.GET.get('sort_order', 'desc')  # Default descending order
+            sort_by = request.GET.get('sort_by', 'created_at')
+            sort_order = request.GET.get('sort_order', 'desc')
             page = int(request.GET.get('page', 1))
             per_page = int(request.GET.get('per_page', 10))
 
-            # Validate sort parameters
             allowed_sort_fields = ['created_at', 'price', 'name', 'discount']
             if sort_by not in allowed_sort_fields:
                 sort_by = 'created_at'
-
             if sort_order not in ['asc', 'desc']:
                 sort_order = 'desc'
 
-            # Calculate offset for pagination
             offset = (page - 1) * per_page
 
             with connection.cursor() as cursor:
-                # Build the base query
+                # Build main product query
                 query = """
                     SELECT 
                         p.product_id,
@@ -425,12 +465,19 @@ def search_products(request):
                 """
                 params = []
 
-                # Add search conditions
+                # Apply keyword search
                 if search_query:
-                    query += " AND (LOWER(p.product_name) LIKE LOWER(%s) OR LOWER(p.description) LIKE LOWER(%s))"
-                    search_pattern = f'%{search_query}%'
-                    params.extend([search_pattern, search_pattern])
+                    query += """
+                        AND (
+                            LOWER(p.product_name) LIKE LOWER(%s)
+                            OR LOWER(p.description) LIKE LOWER(%s)
+                            OR LOWER(c.category_name) LIKE LOWER(%s)
+                        )
+                    """
+                    like_pattern = f"%{search_query}%"
+                    params.extend([like_pattern, like_pattern, like_pattern])
 
+                # Apply filters
                 if category_id:
                     query += " AND p.category_id = %s"
                     params.append(category_id)
@@ -447,19 +494,16 @@ def search_products(request):
                     query += " AND p.merchant_id = %s"
                     params.append(merchant_id)
 
-                # Add sorting
+                # Sorting and pagination
                 query += f" ORDER BY p.{sort_by} {sort_order}"
-
-                # Add pagination
                 query += " LIMIT %s OFFSET %s"
                 params.extend([per_page, offset])
 
-                # Execute the query
                 cursor.execute(query, params)
                 columns = [col[0] for col in cursor.description]
                 products = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-                # Get total count for pagination
+                # Build count query
                 count_query = """
                     SELECT COUNT(*)
                     FROM products p
@@ -469,11 +513,15 @@ def search_products(request):
                 """
                 count_params = []
 
-                # Add the same search conditions to count query
                 if search_query:
-                    count_query += " AND (LOWER(p.product_name) LIKE LOWER(%s) OR LOWER(p.description) LIKE LOWER(%s))"
-                    search_pattern = f'%{search_query}%'
-                    count_params.extend([search_pattern, search_pattern])
+                    count_query += """
+                        AND (
+                            LOWER(p.product_name) LIKE LOWER(%s)
+                            OR LOWER(p.description) LIKE LOWER(%s)
+                            OR LOWER(c.category_name) LIKE LOWER(%s)
+                        )
+                    """
+                    count_params.extend([like_pattern, like_pattern, like_pattern])
 
                 if category_id:
                     count_query += " AND p.category_id = %s"
@@ -494,9 +542,12 @@ def search_products(request):
                 cursor.execute(count_query, count_params)
                 total_count = cursor.fetchone()[0]
 
-                # Process the results
+                # Format product images
                 for product in products:
-                    product['images'] = json.loads(product['images'])
+                    try:
+                        product['images'] = json.loads(product['images'])
+                    except:
+                        product['images'] = []
 
                 return JsonResponse({
                     'message': 'Products retrieved successfully',
@@ -513,6 +564,7 @@ def search_products(request):
             return JsonResponse({'error': str(e)}, status=500)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
 
 @csrf_exempt
 def add_address(request):
@@ -794,6 +846,7 @@ def get_cart(request):
 @csrf_exempt
 def update_cart_item(request, item_id):
     if request.method != 'PUT':
+        print(request.method)
         return JsonResponse({'error': 'Only PUT method allowed'}, status=405)
     
     try:
@@ -936,6 +989,37 @@ def place_order(request):
                     WHERE c.user_id = %s
                 """, [user_id])
 
+                # After order is placed, check if this is the user's first order
+                cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = %s", [user_id])
+                order_count = cursor.fetchone()[0]
+                if order_count == 1:
+                    # Check if user was referred
+                    cursor.execute("SELECT referral_code_used FROM users WHERE id = %s", [user_id])
+                    code_used = cursor.fetchone()[0]
+                    if code_used:
+                        cursor.execute("SELECT user_id FROM referrals WHERE referral_code = %s", [code_used])
+                        referrer = cursor.fetchone()
+                        if referrer:
+                            referrer_id = referrer[0]
+                            # Add 50 points to referrer
+                            cursor.execute("SELECT total_points, history FROM points WHERE user_id = %s", [referrer_id])
+                            row = cursor.fetchone()
+                            if row:
+                                total_points, history = row
+                                total_points += 50
+                                history_list = json.loads(history) if history else []
+                                history_list.append({"source": "referral", "points": 50, "date": datetime.now().strftime("%Y-%m-%d")})
+                                cursor.execute("UPDATE points SET total_points = %s, history = %s WHERE user_id = %s", [total_points, json.dumps(history_list), referrer_id])
+                            else:
+                                history_list = [{"source": "referral", "points": 50, "date": datetime.now().strftime("%Y-%m-%d")}]
+                                cursor.execute("INSERT INTO points (user_id, total_points, history) VALUES (%s, %s, %s)", [referrer_id, 50, json.dumps(history_list)])
+                            # Update successful_referrals
+                            cursor.execute("SELECT successful_referrals FROM referrals WHERE user_id = %s", [referrer_id])
+                            succ_ref = cursor.fetchone()[0]
+                            succ_list = json.loads(succ_ref) if succ_ref else []
+                            succ_list.append(user_id)
+                            cursor.execute("UPDATE referrals SET successful_referrals = %s WHERE user_id = %s", [json.dumps(succ_list), referrer_id])
+
                 cursor.execute("COMMIT")
                 return JsonResponse({
                     'message': 'Order placed successfully',
@@ -996,3 +1080,95 @@ def get_orders(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=400)
+
+def generate_referral_code():
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choices(chars, k=6))
+
+def get_unique_referral_code(cursor):
+    while True:
+        code = generate_referral_code()
+        cursor.execute("SELECT 1 FROM referrals WHERE referral_code = %s", [code])
+        if not cursor.fetchone():
+            return code
+
+@csrf_exempt
+def get_referral_code(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'error': 'User not authenticated'}, status=401)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT referral_code FROM referrals WHERE user_id = %s", [user_id])
+        row = cursor.fetchone()
+        if not row:
+            return JsonResponse({'error': 'Referral code not found'}, status=404)
+        return JsonResponse({'referral_code': row[0]})
+
+@csrf_exempt
+def get_referrals(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'error': 'User not authenticated'}, status=401)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT referred_user_ids, successful_referrals FROM referrals WHERE user_id = %s", [user_id])
+        row = cursor.fetchone()
+        if not row:
+            return JsonResponse({'error': 'Referral info not found'}, status=404)
+        referred = json.loads(row[0]) if row[0] else []
+        successful = set(json.loads(row[1]) if row[1] else [])
+        referred_details = []
+        if referred:
+            format_strings = ','.join(['%s'] * len(referred))
+            cursor.execute(f"SELECT id, username FROM users WHERE id IN ({format_strings})", referred)
+            user_map = {r[0]: r[1] for r in cursor.fetchall()}
+            for rid in referred:
+                referred_details.append({
+                    'user_id': rid,
+                    'username': user_map.get(rid, ''),
+                    'points_earned': 50 if rid in successful else 0
+                })
+        return JsonResponse({'referred': referred_details})
+
+@csrf_exempt
+def get_points_history(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'error': 'User not authenticated'}, status=401)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT total_points, history FROM points WHERE user_id = %s", [user_id])
+        row = cursor.fetchone()
+        if not row:
+            return JsonResponse({'total_points': 0, 'history': []})
+        total_points, history = row
+        history_list = json.loads(history) if history else []
+        return JsonResponse({'total_points': total_points, 'history': history_list})
+
+@csrf_exempt
+def get_user_details(request):
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'error': 'User not authenticated'}, status=401)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT id, username, email, mobile_no, is_verified, referral_code_used FROM users WHERE id = %s", [user_id])
+        row = cursor.fetchone()
+        if not row:
+            return JsonResponse({'error': 'User not found'}, status=404)
+        columns = [col[0] for col in cursor.description]
+        user = dict(zip(columns, row))
+        # Add referral code
+        cursor.execute("SELECT referral_code FROM referrals WHERE user_id = %s", [user_id])
+        ref_row = cursor.fetchone()
+        user['referral_code'] = ref_row[0] if ref_row else None
+        # Add points
+        cursor.execute("SELECT total_points FROM points WHERE user_id = %s", [user_id])
+        points_row = cursor.fetchone()
+        user['total_points'] = points_row[0] if points_row else 0
+        return JsonResponse({'user': user})
